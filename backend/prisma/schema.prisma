@@ -1,131 +1,240 @@
-// ============================================
-// SOGAS-RH - Prisma Schema
-// ============================================
-// Module 1 : Authentification & RBAC
-// Base de données : MySQL
-// ============================================
+// ========================================
+// SCHEMA PRISMA - SOGAS-RH V2.0
+// ========================================
+// Projet      : Système RH/Paie Complet
+// Base        : MySQL 8.0+
+// ORM         : Prisma 5+
+// Version     : M2 (Employee Model)
+// Date        : 2025-09-29
+// ========================================
 
-// Configuration de la source de données
+// --- Configuration DataSource ---
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
-// Configuration du générateur de client Prisma
+// --- Configuration Generator ---
 generator client {
   provider = "prisma-client-js"
 }
 
-// ============================================
-// USERS & AUTHENTICATION
-// ============================================
+// ========================================
+// MODULE 1 : AUTHENTIFICATION & RBAC
+// ========================================
 
-/// Utilisateur de l'application
+// --- Model User ---
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String    @db.VarChar(255)
-  firstName    String    @db.VarChar(100)
-  lastName     String    @db.VarChar(100)
-  isActive     Boolean   @default(true)
-  
+  id        String   @id @default(cuid())
+  username  String   @unique
+  email     String   @unique
+  password  String   // Hash bcrypt stocké
+  firstName String?
+  lastName  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Relations
-  roleLinks    UserRole[]
-  sessions     Session[]
-  
-  // Métadonnées
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  
-  @@map("users")
+  roles           UserRole[]
+  sessions        Session[]
+  revokedTokens   RevokedToken[]
+  employee        Employee?      // Relation inverse 1-to-1 avec Employee
+
+  @@index([email])
+  @@index([username])
+  @@index([isActive])
 }
 
-// ============================================
-// RBAC (Role-Based Access Control)
-// ============================================
-
-/// Rôle attribué aux utilisateurs
+// --- Model Role ---
 model Role {
-  id        String   @id @default(cuid())
-  name      String   @unique @db.VarChar(100)
-  
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
   // Relations
-  rolePerms RolePermission[]
-  userLinks UserRole[]
-  
-  // Métadonnées
-  createdAt DateTime @default(now())
-  
-  @@map("roles")
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@index([name])
 }
 
-/// Permission attribuée aux rôles
+// --- Model Permission ---
 model Permission {
-  id        String   @id @default(cuid())
-  name      String   @unique @db.VarChar(100)
-  
+  id          String   @id @default(cuid())
+  resource    String   // Ex: "employees", "contracts", "payroll"
+  action      String   // Ex: "create", "read", "update", "delete"
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
   // Relations
-  rolePerms RolePermission[]
-  
-  // Métadonnées
-  createdAt DateTime @default(now())
-  
-  @@map("permissions")
+  roles RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
 }
 
-/// Table de liaison Many-to-Many : User <-> Role
+// --- Model UserRole (Pivot M2M) ---
 model UserRole {
-  userId String
-  roleId String
-  
+  id         String   @id @default(cuid())
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+
   // Relations
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  
-  @@id([userId, roleId])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
   @@index([roleId])
-  @@map("user_roles")
 }
 
-/// Table de liaison Many-to-Many : Role <-> Permission
+// --- Model RolePermission (Pivot M2M) ---
 model RolePermission {
+  id           String   @id @default(cuid())
   roleId       String
   permissionId String
-  
+  assignedAt   DateTime @default(now())
+
   // Relations
-  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-  
-  @@id([roleId, permissionId])
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
   @@index([permissionId])
-  @@map("role_permissions")
 }
 
-// ============================================
-// SESSIONS & TOKEN MANAGEMENT
-// ============================================
-
-/// Session utilisateur avec Refresh Token
+// --- Model Session ---
 model Session {
-  id                String    @id @default(cuid())
-  userId            String
-  currentRefreshJti String    @db.VarChar(255)
-  
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  refreshToken String?  @unique
+  ipAddress    String?
+  userAgent    String?  @db.Text
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
   // Relations
-  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Métadonnées
-  createdAt         DateTime  @default(now())
-  revokedAt         DateTime?
-  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
-  @@map("sessions")
+  @@index([token])
+  @@index([expiresAt])
 }
 
-/// Tokens révoqués (blacklist JWT)
+// --- Model RevokedToken ---
 model RevokedToken {
-  jti       String   @id @db.VarChar(255)
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  reason    String?
   revokedAt DateTime @default(now())
-  
-  @@map("revoked_tokens")
+  expiresAt DateTime
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
 }
+
+// ========================================
+// MODULE 2 : GESTION DES EMPLOYÉS
+// ========================================
+
+// --- Enums ---
+enum EmployeeStatus {
+  ACTIVE      // Employé actif en poste
+  SUSPENDED   // Suspendu temporairement
+  RESIGNED    // Démission
+  TERMINATED  // Licenciement
+  ONBOARDING  // En période d'intégration
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNSPECIFIED
+}
+
+// --- Model Employee ---
+// ⚠️ IMPORTANT SÉCURITÉ & RGPD :
+// Le chiffrement et le masquage des données sensibles (NIN, RIB) 
+// seront implémentés au sous-module 2.7 – Sécurité & RGPD.
+// NE PAS logguer de données sensibles (NIN, RIB, etc.) dans les logs applicatifs.
+// Les contrôles d'accès granulaires seront appliqués via RBAC (Module 1).
+model Employee {
+  id String @id @default(cuid())
+
+  // Lien optionnel vers User (si l'employé a un compte système)
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Identité
+  employeeCode String  @unique // Code unique interne (ex: EMP001, EMP002)
+  firstName    String  // Prénom
+  middleName   String? // Deuxième prénom (optionnel)
+  lastName     String  // Nom de famille
+  gender       Gender? // Genre (valeur indicative ; traitement RGPD en 2.7)
+
+  // Contacts
+  email String? @unique // Email professionnel (peut être différent du User.email)
+  phone String? // Téléphone principal
+
+  // Données civiles
+  nin         String  @unique @db.VarChar(13) // NIN Sénégalais (13 chiffres) - Validation regex côté service
+  nationality String? // Nationalité
+  maritalStatus String? // Statut matrimonial (célibataire, marié, etc.)
+
+  // Adresse
+  addressLine1 String? // Ligne 1 d'adresse
+  addressLine2 String? // Ligne 2 d'adresse (optionnel)
+  city         String? // Ville
+  region       String? // Région/Province
+  country      String? // Pays
+  postalCode   String? // Code postal
+
+  // Contacts d'urgence
+  emergencyContactName  String? // Nom du contact d'urgence
+  emergencyContactPhone String? // Téléphone du contact d'urgence
+
+  // Données bancaires (à sécuriser ultérieurement en 2.7)
+  rib String? // RIB (Relevé d'Identité Bancaire)
+
+  // Dates importantes
+  dateOfBirth DateTime? // Date de naissance
+  hireDate    DateTime  // Date d'embauche (obligatoire)
+
+  // Statut & Activation
+  status   EmployeeStatus @default(ACTIVE) // Statut de l'employé
+  isActive Boolean        @default(true) // Indicateur actif/inactif
+
+  // Timestamps
+  createdAt DateTime @default(now()) // Date de création de l'enregistrement
+  updatedAt DateTime @updatedAt // Date de dernière modification
+
+  // Index pour optimiser les requêtes fréquentes
+  @@index([lastName, firstName]) // Recherche par nom
+  @@index([status]) // Filtrage par statut
+  @@index([email]) // Recherche par email
+  @@index([employeeCode]) // Recherche par code employé
+}
+
+// ========================================
+// FIN DU SCHEMA
+// ========================================
+// Prochaines migrations :
+// - M3 : Contrats (Contract, ContractType)
+// - M4 : Pointage (Attendance, TimeLog)
+// - M5 : Congés (Leave, LeaveType, LeaveBalance)
+// - M6 : Paie (Payroll, PayrollItem, PayrollPeriod)
+// ========================================
