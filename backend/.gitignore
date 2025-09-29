@@ -1,0 +1,158 @@
+# ============================================
+# SOGAS-RH Backend - .gitignore
+# ============================================
+# Node.js / TypeScript / Prisma
+# Windows 11 (dev) / Windows Server (prod)
+# ============================================
+
+# ============================================
+# SECRETS & CONFIGURATION SENSIBLE
+# ============================================
+# CRITIQUE : Ne JAMAIS committer ces fichiers
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ============================================
+# DEPENDENCIES
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ============================================
+# BUILD OUTPUT
+# ============================================
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ============================================
+# LOGS
+# ============================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+lerna-debug.log*
+pnpm-debug.log*
+
+# ============================================
+# PRISMA
+# ============================================
+# ⚠️ ON VERSIONNE LES MIGRATIONS (prisma/migrations/)
+# Ignorer uniquement les fichiers générés ou temporaires
+
+# Base de données locale SQLite (si utilisée pour dev)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Fichiers temporaires Prisma
+.prisma/
+
+# ============================================
+# TYPESCRIPT
+# ============================================
+*.tsbuildinfo
+.tsbuildinfo
+
+# ============================================
+# TESTS & COVERAGE
+# ============================================
+coverage/
+.nyc_output/
+*.lcov
+
+# ============================================
+# EDITORS & IDEs
+# ============================================
+
+# VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains IDEs (WebStorm, IntelliJ, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ============================================
+# SYSTÈME D'EXPLOITATION
+# ============================================
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS (si collaboration multi-OS)
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+.directory
+.Trash-*
+
+# ============================================
+# TEMPORAIRES & CACHE
+# ============================================
+*.tmp
+*.temp
+*.cache
+.cache/
+.temp/
+.tmp/
+
+# ============================================
+# OPTIONNEL : DOCUMENTATION GÉNÉRÉE
+# ============================================
+# Décommenter si vous générez de la doc auto
+# docs/api/
+# typedoc/
+
+# ============================================
+# NOTES IMPORTANTES
+# ============================================
+# 1. Les migrations Prisma (prisma/migrations/) SONT versionnées
+# 2. Le .env DOIT être dans .gitignore (utiliser .env.example comme template)
+# 3. En prod Windows Server, gérer les secrets via Key Vault / Secrets Manager
+# 4. Ne jamais committer node_modules ou dist
+# 5. Logs : ignorer en dev, gérer différemment en prod (rotation, archivage)

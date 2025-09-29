@@ -1,0 +1,101 @@
+{
+  "compilerOptions": {
+    // ============================================
+    // MODULE & TARGET
+    // ============================================
+    
+    // Utilisation d'ESM natif (import/export) pour Node.js moderne
+    "module": "ES2022",
+    
+    // Cible ES2022 pour profiter des dernières fonctionnalités JavaScript
+    "target": "ES2022",
+    
+    // Stratégie de résolution des modules (bundler = compatible tsx + tsc)
+    "moduleResolution": "bundler",
+
+    // ============================================
+    // OUTPUT & SOURCE
+    // ============================================
+    
+    // Répertoire de sortie pour les fichiers compilés
+    "outDir": "./dist",
+    
+    // Répertoire racine des fichiers source TypeScript
+    "rootDir": "./src",
+
+    // ============================================
+    // STRICT MODE & TYPE CHECKING
+    // ============================================
+    
+    // Active tous les checks stricts de TypeScript
+    "strict": true,
+    
+    // Interdit les 'any' implicites (force le typage explicite)
+    "noImplicitAny": true,
+    
+    // Vérifie strictement les valeurs null et undefined
+    "strictNullChecks": true,
+    
+    // Ignore la vérification des fichiers de définition .d.ts (améliore les perfs)
+    "skipLibCheck": true,
+
+    // ============================================
+    // INTEROPERABILITY & IMPORTS
+    // ============================================
+    
+    // Permet l'interopérabilité entre CommonJS et ESM
+    "esModuleInterop": true,
+    
+    // Permet d'importer des fichiers JSON comme modules
+    "resolveJsonModule": true,
+    
+    // Définitions de types disponibles (Node.js)
+    "types": ["node"],
+
+    // ============================================
+    // ADDITIONAL OPTIONS
+    // ============================================
+    
+    // Génère les source maps pour le debugging
+    "sourceMap": true,
+    
+    // Génère les fichiers de déclaration .d.ts
+    "declaration": true,
+    
+    // Préserve la structure des dossiers dans outDir
+    "declarationMap": true,
+    
+    // Force l'import avec l'extension de fichier (recommandé pour ESM)
+    "allowImportingTsExtensions": false,
+    
+    // Permet les imports par défaut depuis des modules sans export par défaut
+    "allowSyntheticDefaultImports": true,
+    
+    // Émet les métadonnées pour les décorateurs (si utilisés)
+    "emitDecoratorMetadata": false,
+    "experimentalDecorators": false,
+    
+    // Ne génère pas de fichiers si des erreurs sont détectées
+    "noEmitOnError": true,
+    
+    // Vérifie que les fichiers importés existent réellement
+    "forceConsistentCasingInFileNames": true
+  },
+
+  // ============================================
+  // INCLUDES & EXCLUDES
+  // ============================================
+  
+  // Fichiers à inclure dans la compilation
+  "include": [
+    "src/**/*"
+  ],
+  
+  // Fichiers à exclure de la compilation
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.spec.ts",
+    "**/*.test.ts"
+  ]
+}
