@@ -51,6 +51,7 @@
     "@typescript-eslint/eslint-plugin": "^8.18.1",
     "@typescript-eslint/parser": "^8.18.1",
     "eslint": "^9.17.0",
+    "jest": "^30.2.0",
     "prettier": "^3.4.2",
     "prisma": "^6.2.0",
     "tsx": "^4.19.2",
@@ -59,5 +60,21 @@
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
+  },
+
+
+
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "validators/**/*.js",
+      "!validators/**/*.test.js"
+    ]
   }
 }
