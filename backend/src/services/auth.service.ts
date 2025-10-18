@@ -1,304 +1,261 @@
-import type { PermissionName } from '../types/auth';
+import { prisma } from '../lib/prisma.js';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 
 /**
- * User record returned by UserRepository
+ * Service d'authentification
  */
-export interface UserRecord {
-  id: string;
-  email: string;
-  passwordHash: string;
-  roleIds: string[];
-  permissions: PermissionName[];
-}
-
-/**
- * Session record returned by SessionStore
- */
-export interface SessionRecord {
-  id: string;
-  userId: string;
-  currentRefreshJti: string;
-  createdAt: Date;
-  revokedAt?: Date;
-}
-
-/**
- * Repository interface for user operations
- */
-export interface UserRepository {
-  findByEmail(email: string): Promise<UserRecord | null>;
-}
-
-/**
- * Store interface for session management
- */
-export interface SessionStore {
-  create(userId: string, refreshJti: string): Promise<SessionRecord>;
-  get(sessionId: string): Promise<SessionRecord | null>;
-  setRefreshJti(sessionId: string, newJti: string): Promise<void>;
-  revoke(sessionId: string): Promise<void>;
-}
-
-/**
- * Store interface for token revocation
- */
-export interface RevocationStore {
-  isRevoked(jti: string): Promise<boolean>;
-  revoke(jti: string): Promise<void>;
-}
-
-/**
- * Token service interface for JWT operations
- */
-export interface TokenService {
-  generateAccessToken(payload: {
-    userId: string;
-    email: string;
-    roleIds: string[];
-    permissions: PermissionName[];
-  }): string;
-  
-  generateRefreshToken(payload: {
-    userId: string;
-    sessionId: string;
-    jti: string;
-  }): string;
-  
-  verifyAccessToken(token: string): {
-    userId: string;
-    email: string;
-    roleIds: string[];
-    permissions: PermissionName[];
-  };
-  
-  verifyRefreshToken(token: string): {
-    userId: string;
-    sessionId: string;
-    jti: string;
-  };
-}
-
-/**
- * Hash service interface for password operations
- */
-export interface HashService {
-  hash(password: string): Promise<string>;
-  verify(password: string, hash: string): Promise<boolean>;
-}
-
-/**
- * Login response structure
- */
-export interface LoginResponse {
-  user: {
-    id: string;
-    email: string;
-    roleIds: string[];
-    permissions: PermissionName[];
-  };
-  tokens: {
-    accessToken: string;
-    refreshToken: string;
-  };
-}
-
-/**
- * Refresh response structure
- */
-export interface RefreshResponse {
-  accessToken: string;
-  refreshToken: string;
-}
-
-/**
- * Authentication Service
- * Handles login, token refresh, and logout operations
- */
-export class AuthService {
-  constructor(
-    private readonly deps: {
-      userRepository: UserRepository;
-      sessionStore: SessionStore;
-      revocationStore: RevocationStore;
-      tokenService?: TokenService;
-      hashService?: HashService;
-    }
-  ) {}
-
+class AuthService {
   /**
-   * Authenticates a user with email and password
+   * Connexion utilisateur
    */
-  async loginWithPassword(
-    email: string,
-    password: string
-  ): Promise<LoginResponse> {
-    if (!this.deps.hashService) {
-      throw new Error('HashService not configured');
-    }
-    if (!this.deps.tokenService) {
-      throw new Error('TokenService not configured');
-    }
+  async login(email: string, password: string) {
+    // Récupérer l'utilisateur avec ses rôles et permissions
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: {
+        roles: {
+          include: {
+            role: {
+              include: {
+                permissions: {
+                  include: {
+                    permission: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
 
-    // 1. Find user by email
-    const user = await this.deps.userRepository.findByEmail(email);
     if (!user) {
       throw new Error('INVALID_CREDENTIALS');
     }
 
-    // 2. Verify password
-    const isValidPassword = await this.deps.hashService.verify(
-      password,
-      user.passwordHash
-    );
+    if (!user.isActive) {
+      throw new Error('ACCOUNT_DISABLED');
+    }
+
+    // Vérifier le mot de passe
+    const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+
     if (!isValidPassword) {
       throw new Error('INVALID_CREDENTIALS');
     }
 
-    // 3. Generate refresh JTI
-    const refreshJti = crypto.randomUUID();
+    // Extraire les rôles et permissions
+    const roles = user.roles.map((ur) => ur.role.name);
+    const permissions = user.roles.flatMap((ur) =>
+      ur.role.permissions.map((rp) => `${rp.permission.resource}:${rp.permission.action}`)
+    );
 
-    // 4. Create session
-    const session = await this.deps.sessionStore.create(user.id, refreshJti);
+    // Générer les tokens
+    const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'default-access-secret';
+    const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'default-refresh-secret';
 
-    // 5. Generate tokens
-    const accessToken = this.deps.tokenService.generateAccessToken({
-      userId: user.id,
-      email: user.email,
-      roleIds: user.roleIds,
-      permissions: user.permissions,
-    });
+    const accessToken = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        roles,
+        permissions,
+      },
+      JWT_ACCESS_SECRET,
+      { expiresIn: '15m' }
+    );
 
-    const refreshToken = this.deps.tokenService.generateRefreshToken({
-      userId: user.id,
-      sessionId: session.id,
-      jti: refreshJti,
-    });
+    const refreshToken = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+      },
+      JWT_REFRESH_SECRET,
+      { expiresIn: '7d' }
+    );
 
-    // 6. Return response
+    // Sauvegarder la session
+    // ✅ APRÈS (correction)
+await prisma.session.create({
+  data: {
+    userId: user.id,
+    refreshToken,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  },
+});
+
     return {
+      accessToken,
+      refreshToken,
       user: {
         id: user.id,
         email: user.email,
-        roleIds: user.roleIds,
-        permissions: user.permissions,
-      },
-      tokens: {
-        accessToken,
-        refreshToken,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        roles,
+        permissions,
       },
     };
   }
 
   /**
-   * Refreshes an access token using a refresh token
+   * Déconnexion utilisateur
    */
-  async refreshTokens(refreshToken: string): Promise<RefreshResponse> {
-    if (!this.deps.tokenService) {
-      throw new Error('TokenService not configured');
-    }
+  async logout(refreshToken: string) {
+    await prisma.session.deleteMany({
+      where: { refreshToken },
+    });
+  }
 
-    // 1. Verify refresh token
-    let payload;
+  /**
+   * Rafraîchir le token d'accès
+   */
+  async refreshAccessToken(refreshToken: string) {
+    const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'default-refresh-secret';
+    const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'default-access-secret';
+
     try {
-      payload = this.deps.tokenService.verifyRefreshToken(refreshToken);
-    } catch {
-      throw new Error('INVALID_TOKEN');
-    }
+      // Vérifier le refresh token
+      const decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as {
+        userId: string;
+        email: string;
+      };
 
-    // 2. Check if JTI is revoked
-    const isRevoked = await this.deps.revocationStore.isRevoked(payload.jti);
-    if (isRevoked) {
-      throw new Error('TOKEN_REVOKED');
-    }
+      // Vérifier que la session existe
+      const session = await prisma.session.findFirst({
+        where: {
+          userId: decoded.userId,
+          refreshToken,
+        },
+      });
 
-    // 3. Get session
-    const session = await this.deps.sessionStore.get(payload.sessionId);
-    if (!session) {
-      throw new Error('SESSION_NOT_FOUND');
-    }
+      if (!session) {
+        throw new Error('INVALID_REFRESH_TOKEN');
+      }
 
-    // 4. Check if session is revoked
-    if (session.revokedAt) {
-      throw new Error('SESSION_REVOKED');
-    }
+      // Récupérer l'utilisateur avec rôles et permissions
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+        include: {
+          roles: {
+            include: {
+              role: {
+                include: {
+                  permissions: {
+                    include: {
+                      permission: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
 
-    // 5. Verify JTI matches current session JTI
-    if (session.currentRefreshJti !== payload.jti) {
-      // Token reuse detected - revoke session
-      await this.deps.sessionStore.revoke(session.id);
-      await this.deps.revocationStore.revoke(payload.jti);
-      throw new Error('TOKEN_REUSE_DETECTED');
-    }
+      if (!user || !user.isActive) {
+        throw new Error('USER_NOT_FOUND');
+      }
 
-    // 6. Get user
-    const user = await this.deps.userRepository.findByEmail(
-      payload.userId // Note: This assumes userId, but we should use a findById method
-    );
+      // Extraire les rôles et permissions
+      const roles = user.roles.map((ur) => ur.role.name);
+      const permissions = user.roles.flatMap((ur) =>
+        ur.role.permissions.map((rp) => `${rp.permission.resource}:${rp.permission.action}`)
+      );
+
+      // Générer un nouveau access token
+      const accessToken = jwt.sign(
+        {
+          userId: user.id,
+          email: user.email,
+          roles,
+          permissions,
+        },
+        JWT_ACCESS_SECRET,
+        { expiresIn: '15m' }
+      );
+
+      return { accessToken };
+    } catch (error) {
+      throw new Error('INVALID_REFRESH_TOKEN');
+    }
+  }
+
+  /**
+   * Récupérer un utilisateur par son ID avec ses rôles et permissions
+   * MÉTHODE AJOUTÉE POUR /auth/me
+   */
+  async getUserById(userId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        isActive: true,
+        createdAt: true,
+        roles: {
+          select: {
+            role: {
+              select: {
+                id: true,
+                name: true,
+                description: true,
+                permissions: {
+                  select: {
+                    permission: {
+                      select: {
+                        id: true,
+                        resource: true,
+                        action: true,
+                        description: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
     if (!user) {
       throw new Error('USER_NOT_FOUND');
     }
 
-    // 7. Revoke old refresh token
-    await this.deps.revocationStore.revoke(payload.jti);
-
-    // 8. Generate new refresh JTI
-    const newRefreshJti = crypto.randomUUID();
-
-    // 9. Update session with new JTI
-    await this.deps.sessionStore.setRefreshJti(session.id, newRefreshJti);
-
-    // 10. Generate new tokens
-    const accessToken = this.deps.tokenService.generateAccessToken({
-      userId: user.id,
-      email: user.email,
-      roleIds: user.roleIds,
-      permissions: user.permissions,
-    });
-
-    const newRefreshToken = this.deps.tokenService.generateRefreshToken({
-      userId: user.id,
-      sessionId: session.id,
-      jti: newRefreshJti,
-    });
+    // Formater les rôles et permissions
+    const roles = user.roles.map((ur) => ur.role);
+    const permissions = roles.flatMap((role) =>
+      role.permissions.map((rp) => rp.permission)
+    );
 
     return {
-      accessToken,
-      refreshToken: newRefreshToken,
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      isActive: user.isActive,
+      createdAt: user.createdAt,
+      roles: roles.map((r) => ({
+        id: r.id,
+        name: r.name,
+        description: r.description,
+      })),
+      permissions: permissions.map((p) => ({
+        id: p.id,
+        resource: p.resource,
+        action: p.action,
+        description: p.description,
+      })),
     };
   }
-
-  /**
-   * Logs out a user by revoking their session
-   */
-  async logout(sessionId: string): Promise<void> {
-    const session = await this.deps.sessionStore.get(sessionId);
-    if (!session) {
-      return; // Idempotent
-    }
-
-    // Revoke the session
-    await this.deps.sessionStore.revoke(sessionId);
-
-    // Revoke the current refresh token
-    if (session.currentRefreshJti) {
-      await this.deps.revocationStore.revoke(session.currentRefreshJti);
-    }
-  }
-
-  /**
-   * Logs out using a refresh token
-   */
-  async logoutWithToken(refreshToken: string): Promise<void> {
-    if (!this.deps.tokenService) {
-      throw new Error('TokenService not configured');
-    }
-
-    try {
-      const payload = this.deps.tokenService.verifyRefreshToken(refreshToken);
-      await this.logout(payload.sessionId);
-    } catch {
-      // Token invalid or expired - logout is idempotent
-      return;
-    }
-  }
 }
+
+// Export de l'instance (pour utilisation directe)
+export const authService = new AuthService();
+
+// Export de la classe (pour d'autres usages comme repositories)
+export { AuthService };

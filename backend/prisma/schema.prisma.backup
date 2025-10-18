@@ -1,0 +1,230 @@
+// ========================================
+// SCHEMA PRISMA - SOGAS-RH V2.0
+// ========================================
+// Projet      : Système RH/Paie Complet
+// Base        : MySQL 8.0+
+// ORM         : Prisma 5+
+// Version     : M2.3 (Auth + Employee + RBAC)
+// Date        : 2025-10-05
+// ========================================
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ========================================
+// MODULE 1 : AUTHENTIFICATION & RBAC
+// ========================================
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  email        String   @unique
+  passwordHash String   @map("passwordHash") // ✅ CORRIGÉ: était "password"
+  firstName    String?
+  lastName     String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  roles         UserRole[]
+  sessions      Session[]
+  revokedTokens RevokedToken[]
+  employee      Employee?
+
+  @@index([email])
+  @@index([username])
+  @@index([isActive])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@index([name])
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  resource    String
+  action      String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  roles RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
+}
+
+model UserRole {
+  id         String   @id @default(cuid())
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  id           String   @id @default(cuid())
+  roleId       String
+  permissionId String
+  assignedAt   DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  token          String    @unique
+  refreshToken   String?   @unique
+  ipAddress      String?
+  userAgent      String?   @db.Text
+  expiresAt      DateTime
+  lastActivityAt DateTime? // ✅ AJOUTÉ: pour le middleware auth
+  createdAt      DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+model RevokedToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  reason    String?
+  revokedAt DateTime @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// ========================================
+// MODULE 2 : GESTION DES EMPLOYÉS
+// ========================================
+
+enum EmployeeStatus {
+  ACTIVE
+  SUSPENDED
+  RESIGNED
+  TERMINATED
+  ONBOARDING
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNSPECIFIED
+}
+
+model Employee {
+  id String @id @default(cuid())
+
+  // Lien optionnel vers User
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // IDENTITÉ
+  employeeCode String  @unique
+  firstName    String
+  middleName   String?
+  lastName     String
+  maidenName   String?
+  gender       Gender?
+
+  // CONTACTS
+  email          String? @unique
+  phone          String?
+  phoneSecondary String?
+  phoneWhatsApp  String?
+
+  // DONNÉES CIVILES
+  nin              String    @unique @db.VarChar(13)
+  cniNumber        String?
+  cniExpiry        DateTime?
+  nineaNumber      String?
+  ipmNumber        String?
+  nationality      String?
+  maritalStatus    String?
+  numberOfChildren Int?      @default(0)
+  dependentsCount  Int?      @default(0)
+
+  // ADRESSE
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  region       String?
+  country      String?
+  postalCode   String?
+
+  // CONTACTS D'URGENCE
+  emergencyContactName  String?
+  emergencyContactPhone String?
+
+  // DONNÉES BANCAIRES
+  rib String?
+
+  // DATES
+  dateOfBirth DateTime?
+  hireDate    DateTime
+
+  // PROFIL
+  profilePicture String?
+
+  // AFFECTATION ORGANISATIONNELLE (pour Module 4.1)
+  siteId       String?
+  departmentId String?
+  serviceId    String?
+  teamId       String?
+  positionId   String?
+
+  // STATUT
+  status   EmployeeStatus @default(ACTIVE)
+  isActive Boolean        @default(true)
+
+  // TIMESTAMPS
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // INDEX
+  @@index([lastName, firstName])
+  @@index([status])
+  @@index([email])
+  @@index([employeeCode])
+  @@index([siteId])
+  @@index([departmentId])
+  @@index([cniNumber])
+}

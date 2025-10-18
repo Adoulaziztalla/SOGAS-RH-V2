@@ -4,17 +4,15 @@
 // Projet      : Système RH/Paie Complet
 // Base        : MySQL 8.0+
 // ORM         : Prisma 5+
-// Version     : M2 (Employee Model)
-// Date        : 2025-09-29
+// Version     : M4.0 (Auth + Employee + RBAC + Leave + Organization)
+// Date        : 2025-10-11
 // ========================================
 
-// --- Configuration DataSource ---
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
-// --- Configuration Generator ---
 generator client {
   provider = "prisma-client-js"
 }
@@ -23,30 +21,28 @@ generator client {
 // MODULE 1 : AUTHENTIFICATION & RBAC
 // ========================================
 
-// --- Model User ---
 model User {
-  id        String   @id @default(cuid())
-  username  String   @unique
-  email     String   @unique
-  password  String   // Hash bcrypt stocké
-  firstName String?
-  lastName  String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  username     String   @unique
+  email        String   @unique
+  passwordHash String   @map("passwordHash")
+  firstName    String?
+  lastName     String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  // Relations
-  roles           UserRole[]
-  sessions        Session[]
-  revokedTokens   RevokedToken[]
-  employee        Employee?      // Relation inverse 1-to-1 avec Employee
+  roles                 UserRole[]
+  sessions              Session[]
+  revokedTokens         RevokedToken[]
+  employee              Employee?
+  reviewedLeaveRequests LeaveRequest[] @relation("LeaveReviewer")
 
   @@index([email])
   @@index([username])
   @@index([isActive])
 }
 
-// --- Model Role ---
 model Role {
   id          String   @id @default(cuid())
   name        String   @unique
@@ -55,37 +51,32 @@ model Role {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  // Relations
   users       UserRole[]
   permissions RolePermission[]
 
   @@index([name])
 }
 
-// --- Model Permission ---
 model Permission {
   id          String   @id @default(cuid())
-  resource    String   // Ex: "employees", "contracts", "payroll"
-  action      String   // Ex: "create", "read", "update", "delete"
+  resource    String
+  action      String
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  // Relations
   roles RolePermission[]
 
   @@unique([resource, action])
   @@index([resource])
 }
 
-// --- Model UserRole (Pivot M2M) ---
 model UserRole {
   id         String   @id @default(cuid())
   userId     String
   roleId     String
   assignedAt DateTime @default(now())
 
-  // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
@@ -94,14 +85,12 @@ model UserRole {
   @@index([roleId])
 }
 
-// --- Model RolePermission (Pivot M2M) ---
 model RolePermission {
   id           String   @id @default(cuid())
   roleId       String
   permissionId String
   assignedAt   DateTime @default(now())
 
-  // Relations
   role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
@@ -110,26 +99,21 @@ model RolePermission {
   @@index([permissionId])
 }
 
-// --- Model Session ---
 model Session {
   id           String   @id @default(cuid())
   userId       String
-  token        String   @unique
-  refreshToken String?  @unique
-  ipAddress    String?
-  userAgent    String?  @db.Text
+  token        String?  @db.VarChar(1000)  // ← CHANGÉ : Text → VarChar(1000)
+  refreshToken String   @db.VarChar(1000)  // ← CHANGÉ : Text → VarChar(1000)
   expiresAt    DateTime
   createdAt    DateTime @default(now())
 
-  // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([token])
-  @@index([expiresAt])
+  @@index([refreshToken])
+  @@map("session")
 }
 
-// --- Model RevokedToken ---
 model RevokedToken {
   id        String   @id @default(cuid())
   userId    String
@@ -138,7 +122,6 @@ model RevokedToken {
   revokedAt DateTime @default(now())
   expiresAt DateTime
 
-  // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -150,13 +133,12 @@ model RevokedToken {
 // MODULE 2 : GESTION DES EMPLOYÉS
 // ========================================
 
-// --- Enums ---
 enum EmployeeStatus {
-  ACTIVE      // Employé actif en poste
-  SUSPENDED   // Suspendu temporairement
-  RESIGNED    // Démission
-  TERMINATED  // Licenciement
-  ONBOARDING  // En période d'intégration
+  ACTIVE
+  SUSPENDED
+  RESIGNED
+  TERMINATED
+  ONBOARDING
 }
 
 enum Gender {
@@ -166,75 +148,283 @@ enum Gender {
   UNSPECIFIED
 }
 
-// --- Model Employee ---
-// ⚠️ IMPORTANT SÉCURITÉ & RGPD :
-// Le chiffrement et le masquage des données sensibles (NIN, RIB) 
-// seront implémentés au sous-module 2.7 – Sécurité & RGPD.
-// NE PAS logguer de données sensibles (NIN, RIB, etc.) dans les logs applicatifs.
-// Les contrôles d'accès granulaires seront appliqués via RBAC (Module 1).
 model Employee {
   id String @id @default(cuid())
 
-  // Lien optionnel vers User (si l'employé a un compte système)
+  // Lien optionnel vers User
   userId String? @unique
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  // Identité
-  employeeCode String  @unique // Code unique interne (ex: EMP001, EMP002)
-  firstName    String  // Prénom
-  middleName   String? // Deuxième prénom (optionnel)
-  lastName     String  // Nom de famille
-  gender       Gender? // Genre (valeur indicative ; traitement RGPD en 2.7)
+  // IDENTITÉ
+  employeeCode String  @unique
+  firstName    String
+  middleName   String?
+  lastName     String
+  maidenName   String?
+  gender       Gender?
 
-  // Contacts
-  email String? @unique // Email professionnel (peut être différent du User.email)
-  phone String? // Téléphone principal
+  // CONTACTS
+  email          String? @unique
+  phone          String?
+  phoneSecondary String?
+  phoneWhatsApp  String?
 
-  // Données civiles
-  nin         String  @unique @db.VarChar(13) // NIN Sénégalais (13 chiffres) - Validation regex côté service
-  nationality String? // Nationalité
-  maritalStatus String? // Statut matrimonial (célibataire, marié, etc.)
+  // DONNÉES CIVILES
+  nin              String    @unique @db.VarChar(13)
+  cniNumber        String?
+  cniExpiry        DateTime?
+  nineaNumber      String?
+  ipmNumber        String?
+  nationality      String?
+  maritalStatus    String?
+  numberOfChildren Int?      @default(0)
+  dependentsCount  Int?      @default(0)
 
-  // Adresse
-  addressLine1 String? // Ligne 1 d'adresse
-  addressLine2 String? // Ligne 2 d'adresse (optionnel)
-  city         String? // Ville
-  region       String? // Région/Province
-  country      String? // Pays
-  postalCode   String? // Code postal
+  // ADRESSE
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  region       String?
+  country      String?
+  postalCode   String?
 
-  // Contacts d'urgence
-  emergencyContactName  String? // Nom du contact d'urgence
-  emergencyContactPhone String? // Téléphone du contact d'urgence
+  // CONTACTS D'URGENCE
+  emergencyContactName  String?
+  emergencyContactPhone String?
 
-  // Données bancaires (à sécuriser ultérieurement en 2.7)
-  rib String? // RIB (Relevé d'Identité Bancaire)
+  // DONNÉES BANCAIRES
+  rib String?
 
-  // Dates importantes
-  dateOfBirth DateTime? // Date de naissance
-  hireDate    DateTime  // Date d'embauche (obligatoire)
+  // DATES
+  dateOfBirth DateTime?
+  hireDate    DateTime
 
-  // Statut & Activation
-  status   EmployeeStatus @default(ACTIVE) // Statut de l'employé
-  isActive Boolean        @default(true) // Indicateur actif/inactif
+  // PROFIL
+  profilePicture String?
 
-  // Timestamps
-  createdAt DateTime @default(now()) // Date de création de l'enregistrement
-  updatedAt DateTime @updatedAt // Date de dernière modification
+  // AFFECTATION ORGANISATIONNELLE (Module 4)
+  siteId       String?
+  departmentId String?
+  serviceId    String?
+  teamId       String?
+  positionId   String?
 
-  // Index pour optimiser les requêtes fréquentes
-  @@index([lastName, firstName]) // Recherche par nom
-  @@index([status]) // Filtrage par statut
-  @@index([email]) // Recherche par email
-  @@index([employeeCode]) // Recherche par code employé
+  // STATUT
+  status   EmployeeStatus @default(ACTIVE)
+  isActive Boolean        @default(true)
+
+  // TIMESTAMPS
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // RELATIONS MODULE 2.4 - CONGÉS
+  leaveRequests LeaveRequest[]
+  leaveBalances LeaveBalance[]
+
+  // RELATIONS MODULE 4 - ORGANISATION
+  site       Site?       @relation(fields: [siteId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  service    Service?    @relation(fields: [serviceId], references: [id])
+  team       Team?       @relation(fields: [teamId], references: [id])
+  position   Position?   @relation(fields: [positionId], references: [id])
+
+  // INDEX
+  @@index([lastName, firstName])
+  @@index([status])
+  @@index([email])
+  @@index([employeeCode])
+  @@index([siteId])
+  @@index([departmentId])
+  @@index([serviceId])
+  @@index([teamId])
+  @@index([positionId])
+  @@index([cniNumber])
 }
 
 // ========================================
-// FIN DU SCHEMA
+// MODULE 2.4 : GESTION DES CONGÉS
 // ========================================
-// Prochaines migrations :
-// - M3 : Contrats (Contract, ContractType)
-// - M4 : Pointage (Attendance, TimeLog)
-// - M5 : Congés (Leave, LeaveType, LeaveBalance)
-// - M6 : Paie (Payroll, PayrollItem, PayrollPeriod)
+
+model LeaveType {
+  id                String   @id @default(cuid())
+  name              String   // "Congé annuel", "Maladie", etc.
+  code              String   @unique // "ANNUAL", "SICK", etc.
+  description       String?  @db.Text
+  isPaid            Boolean  @default(true)
+  requiresApproval  Boolean  @default(true)
+  maxDaysPerRequest Int?     // Limite de jours par demande
+  color             String?  // Pour affichage calendrier (ex: "#3B82F6")
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  requests LeaveRequest[]
+  balances LeaveBalance[]
+
+  @@index([code])
+  @@index([isActive])
+  @@map("leave_types")
+}
+
+model LeaveBalance {
+  id            String   @id @default(cuid())
+  employeeId    String
+  leaveTypeId   String
+  year          Int      // Année fiscale
+  totalDays     Decimal  @db.Decimal(5, 1) // Nombre total de jours
+  usedDays      Decimal  @db.Decimal(5, 1) @default(0) // Jours utilisés
+  remainingDays Decimal  @db.Decimal(5, 1) // Jours restants
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@index([employeeId])
+  @@index([leaveTypeId])
+  @@index([year])
+  @@map("leave_balances")
+}
+
+model LeaveRequest {
+  id          String    @id @default(cuid())
+  employeeId  String
+  leaveTypeId String
+  startDate   DateTime
+  endDate     DateTime
+  totalDays   Decimal   @db.Decimal(4, 1)
+  reason      String?   @db.Text
+  status      String    @default("PENDING") // PENDING, APPROVED, REJECTED, CANCELLED
+  requestedAt DateTime  @default(now())
+  reviewedAt  DateTime?
+  reviewedBy  String?   // userId du manager
+  reviewNotes String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+  reviewer  User?     @relation("LeaveReviewer", fields: [reviewedBy], references: [id])
+
+  @@index([employeeId])
+  @@index([leaveTypeId])
+  @@index([status])
+  @@index([startDate])
+  @@index([endDate])
+  @@index([reviewedBy])
+  @@map("leave_requests")
+}
+
 // ========================================
+// MODULE 4 : ORGANISATION
+// ========================================
+
+// Site / Établissement
+model Site {
+  id          String   @id @default(cuid())
+  code        String   @unique // Code court (ex: "DKR-001")
+  name        String   // Nom du site
+  description String?  @db.Text
+  address     String?
+  city        String?
+  region      String?
+  country     String?  @default("Sénégal")
+  phone       String?
+  email       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  employees   Employee[]
+  departments Department[]
+
+  @@index([code])
+  @@index([isActive])
+  @@map("sites")
+}
+
+// Département
+model Department {
+  id          String   @id @default(cuid())
+  siteId      String?  // Optionnel : un département peut être global
+  code        String   @unique
+  name        String
+  description String?  @db.Text
+  managerId   String?  // Responsable du département (Employee)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  site      Site?      @relation(fields: [siteId], references: [id])
+  employees Employee[]
+  services  Service[]
+
+  @@index([siteId])
+  @@index([code])
+  @@index([isActive])
+  @@map("departments")
+}
+
+// Service (au sein d'un département)
+model Service {
+  id           String   @id @default(cuid())
+  departmentId String
+  code         String   @unique
+  name         String
+  description  String?  @db.Text
+  managerId    String?  // Responsable du service (Employee)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  employees  Employee[]
+  teams      Team[]
+
+  @@index([departmentId])
+  @@index([code])
+  @@index([isActive])
+  @@map("services")
+}
+
+// Équipe de travail
+model Team {
+  id          String   @id @default(cuid())
+  serviceId   String?  // Optionnel : une équipe peut être transversale
+  code        String   @unique
+  name        String
+  description String?  @db.Text
+  leaderId    String?  // Chef d'équipe (Employee)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  service   Service?   @relation(fields: [serviceId], references: [id])
+  employees Employee[]
+
+  @@index([serviceId])
+  @@index([code])
+  @@index([isActive])
+  @@map("teams")
+}
+
+// Poste / Fonction
+model Position {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  title       String   // Intitulé du poste
+  description String?  @db.Text
+  level       String?  // Niveau hiérarchique (Junior, Senior, Manager, etc.)
+  category    String?  // Catégorie (Cadre, Agent de maîtrise, Employé, etc.)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  employees Employee[]
+
+  @@index([code])
+  @@index([category])
+  @@index([isActive])
+  @@map("positions")
+}
